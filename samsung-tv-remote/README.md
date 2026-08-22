@@ -56,6 +56,12 @@ Manager** — make sure it's set to allow connections (or "First Time
 Connection" is not set to block everything). Some models are under
 **Settings → General → Network → Expert Settings**.
 
+## Installing without building
+
+`apk/SamsungTvRemote-debug.apk` is a prebuilt debug APK, kept up to date with
+`app/`. Copy it to your phone and open it to sideload, or `adb install
+apk/SamsungTvRemote-debug.apk`. See `apk/README.md` for details.
+
 ## Building
 
 1. Open the `samsung-tv-remote/` folder directly in Android Studio (Koala or
