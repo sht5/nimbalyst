@@ -1,0 +1,9 @@
+.gradle/
+build/
+app/build/
+local.properties
+*.keystore
+*.jks
+
+# Gradle wrapper jar isn't checked in — see README for how to generate it.
+gradle/wrapper/gradle-wrapper.jar
