@@ -4,15 +4,24 @@ import android.util.Base64
 import android.util.Log
 import com.tvremote.samsung.data.RemoteKey
 import com.tvremote.samsung.data.TvPrefs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
@@ -25,6 +34,17 @@ private const val TAG = "SamsungTvClient"
 /** Name the TV shows on its "Allow this device to connect?" prompt. */
 private const val REMOTE_APP_NAME = "Samsung TV Remote"
 
+/** Plaintext port that also serves a small JSON device-info document (name, model, MAC). */
+private const val INFO_PORT = 8001
+
+/** How many times to check whether the TV is back on the network after a wake signal. */
+private const val WAKE_RETRY_ATTEMPTS = 10
+
+/** Delay between wake-retry checks. 10 attempts * 1.5s = TV gets ~15s to boot networking. */
+private const val WAKE_RETRY_INTERVAL_MS = 1500L
+
+private const val WAKE_PROBE_TIMEOUT_MS = 800
+
 sealed interface TvConnectionState {
     data object Idle : TvConnectionState
     data object Connecting : TvConnectionState
@@ -32,6 +52,8 @@ sealed interface TvConnectionState {
     data object AwaitingPairing : TvConnectionState
     data object Connected : TvConnectionState
     data object Disconnected : TvConnectionState
+    /** A Wake-on-LAN packet was sent; waiting for the TV's network stack to come back up. */
+    data object WakingUp : TvConnectionState
     data class Error(val message: String) : TvConnectionState
 }
 
@@ -59,11 +81,76 @@ class SamsungTvClient(private val prefs: TvPrefs) {
     private val secureClient: OkHttpClient by lazy { buildClient(trustAllCerts = true) }
     private val plainClient: OkHttpClient by lazy { buildClient(trustAllCerts = false) }
 
+    /** Short-timeout client for the one-shot device-info GET, never reused for the socket itself. */
+    private val infoClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var wakeJob: Job? = null
+
     fun connect(ip: String) {
+        wakeJob?.cancel()
         currentIp = ip
         triedFallback = false
         openSocket(ip, secure = true)
     }
+
+    /**
+     * Sends a Wake-on-LAN magic packet to the TV's saved MAC and polls until its network
+     * stack answers, then hands off to the normal pairing/connect flow. There is nothing to
+     * "connect" to until the TV's port is actually open, so we probe a raw TCP connection
+     * first rather than repeatedly driving the websocket through failed handshakes.
+     */
+    fun wake() {
+        val ip = currentIp ?: return
+        val mac = prefs.macFor(ip)
+        if (mac == null) {
+            _state.value = TvConnectionState.Error(
+                "Don't have this TV's MAC address yet — connect once while it's on to capture it.",
+            )
+            return
+        }
+
+        wakeJob?.cancel()
+        wakeJob = scope.launch {
+            _state.value = TvConnectionState.WakingUp
+
+            runCatching { WakeOnLan.send(mac) }
+                .onFailure { Log.w(TAG, "WOL send failed: ${it.message}") }
+
+            var reachable = false
+            var attempt = 0
+            while (attempt < WAKE_RETRY_ATTEMPTS && _state.value is TvConnectionState.WakingUp) {
+                delay(WAKE_RETRY_INTERVAL_MS)
+                if (isPortOpen(ip)) {
+                    reachable = true
+                    break
+                }
+                attempt++
+            }
+
+            if (_state.value !is TvConnectionState.WakingUp) return@launch // superseded meanwhile
+
+            if (reachable) {
+                openSocket(ip, secure = true)
+            } else {
+                _state.value = TvConnectionState.Error(
+                    "TV didn't respond to the wake signal. Make sure \"Power on with mobile\" " +
+                        "is on under the TV's Network settings.",
+                )
+            }
+        }
+    }
+
+    private fun isPortOpen(ip: String): Boolean =
+        runCatching {
+            Socket().use { it.connect(InetSocketAddress(ip, 8002), WAKE_PROBE_TIMEOUT_MS) }
+            true
+        }.getOrDefault(false)
 
     fun sendKey(key: RemoteKey) {
         val socket = webSocket ?: run {
@@ -85,10 +172,18 @@ class SamsungTvClient(private val prefs: TvPrefs) {
         socket.send(payload.toString())
     }
 
+    /** User chose to leave this TV (e.g. "Switch TV") — a deliberate reset back to Idle. */
     fun disconnect() {
+        wakeJob?.cancel()
         webSocket?.close(1000, "user disconnected")
         webSocket = null
-        _state.value = TvConnectionState.Disconnected
+        _state.value = TvConnectionState.Idle
+    }
+
+    /** Full teardown, called once when the owning ViewModel is cleared. */
+    fun release() {
+        disconnect()
+        scope.cancel()
     }
 
     private fun openSocket(ip: String, secure: Boolean) {
@@ -124,6 +219,7 @@ class SamsungTvClient(private val prefs: TvPrefs) {
                         prefs.saveToken(ip, token)
                     }
                     _state.value = TvConnectionState.Connected
+                    captureDeviceInfoIfNeeded(ip)
                 }
                 "ms.channel.timeOut" -> {
                     _state.value = TvConnectionState.Error("Pairing timed out. Try again and accept the prompt on your TV.")
@@ -152,6 +248,34 @@ class SamsungTvClient(private val prefs: TvPrefs) {
             if (_state.value is TvConnectionState.Connected) {
                 _state.value = TvConnectionState.Disconnected
             }
+        }
+    }
+
+    /**
+     * Reads the TV's small unauthenticated device-info document (the same one SmartThings
+     * uses to identify the TV) to learn its MAC address and friendly name. The MAC is what
+     * makes Wake-on-LAN possible later without asking the user to type it in; the name just
+     * makes the remote screen say "Living Room TV" instead of a bare IP. No-ops once we
+     * already have a MAC saved for this IP.
+     */
+    private fun captureDeviceInfoIfNeeded(ip: String) {
+        if (prefs.macFor(ip) != null) return
+        scope.launch {
+            runCatching {
+                val request = Request.Builder().url("http://$ip:$INFO_PORT/api/v2/").build()
+                infoClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    val device = JSONObject(body).optJSONObject("device")
+                    val mac = device?.optString("wifiMac")
+                    if (!mac.isNullOrBlank()) {
+                        prefs.saveMac(ip, mac)
+                    }
+                    val name = device?.optString("name")
+                    if (!name.isNullOrBlank()) {
+                        prefs.lastName = name
+                    }
+                }
+            }.onFailure { Log.w(TAG, "Could not read TV device info: ${it.message}") }
         }
     }
 

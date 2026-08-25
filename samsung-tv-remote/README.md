@@ -45,16 +45,39 @@ but it's stable and widely documented by the home-automation community.
 - "Discover TVs" — SSDP/UPnP scan of the local network to find Samsung TVs
   automatically
 - Power, volume (+/−/mute), channel (+/−), directional pad, OK/Enter, back,
-  home, menu, source, and a numeric keypad
+  home, menu, source, media transport (rewind/play-pause/fast-forward), and
+  a numeric keypad
 - Automatically falls back from the encrypted port (8002) to the plaintext
   port (8001) if the TV doesn't answer on 8002
+- **Turns the TV back on from fully off**, via Wake-on-LAN — see below. The
+  remote screen stays put when the TV drops off the network instead of
+  bouncing back to IP entry, since Power is the only way back in.
+
+## Turning the TV on when it's fully off
+
+The remote-control websocket above only exists while the TV's own OS
+(Tizen) is running, so once the TV is off there's nothing on the network to
+connect to — the same reason a physical remote's power button doesn't use
+Wi-Fi either, it talks to a receiver chip (IR or Bluetooth) that Samsung
+keeps powered in standby. This app has no IR/Bluetooth-remote hardware, so
+it uses the network-side equivalent instead: a **Wake-on-LAN magic packet**
+addressed to the TV's MAC — the same mechanism the SmartThings app uses.
+
+- The MAC is captured automatically, from the TV's plaintext device-info
+  endpoint (`http://<tv-ip>:8001/api/v2/`), the first time you pair —
+  nothing to type in.
+- This only works if the TV's **"Power on with mobile"** setting is on
+  (under **Settings → General → Network → Expert Settings** on most
+  models) — the same setting SmartThings depends on. If a wake signal goes
+  unanswered after ~15 seconds, the remote screen says so.
 
 ## Before your TV will respond
 
 On the TV: **Settings → General → External Device Manager → Device Connect
 Manager** — make sure it's set to allow connections (or "First Time
 Connection" is not set to block everything). Some models are under
-**Settings → General → Network → Expert Settings**.
+**Settings → General → Network → Expert Settings**, which is also where
+**Power on with mobile** lives (see above).
 
 ## Installing without building
 
@@ -85,7 +108,8 @@ app/src/main/java/com/tvremote/samsung/
   TvRemoteViewModel.kt        Holds connection state, exposed to Compose
   data/RemoteKeys.kt          Samsung remote key codes
   data/TvPrefs.kt             Saved IP + pairing token (SharedPreferences)
-  network/SamsungTvClient.kt  Websocket client: connect, pair, send keys
+  network/SamsungTvClient.kt  Websocket client: connect, pair, send keys, wake
+  network/WakeOnLan.kt        Sends the Wake-on-LAN magic packet
   network/TvDiscovery.kt      SSDP scan for Samsung TVs on the LAN
   ui/ConnectScreen.kt         IP entry + discovery results
   ui/RemoteScreen.kt          The remote control surface

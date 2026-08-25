@@ -1,11 +1,8 @@
 package com.tvremote.samsung.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -14,16 +11,20 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
 /**
- * Classic five-way directional pad: arrows around a center Enter/OK button.
+ * A single circular trackpad surface — arrows around the rim, OK in the center — rather than
+ * five separate buttons scattered in a plus shape. Reads as one physical control, the way the
+ * D-pad on a real remote (or an Apple TV remote's trackpad) does.
  */
 @Composable
 fun DPad(
@@ -32,47 +33,72 @@ fun DPad(
     onLeft: () -> Unit,
     onRight: () -> Unit,
     onEnter: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        DPadButton(Icons.Filled.KeyboardArrowUp, "Up", onUp)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DPadButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left", onLeft)
-            Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .background(MaterialTheme.colorScheme.primary, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                IconButton(onClick = onEnter) {
-                    Text(
-                        text = "OK",
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                }
-            }
-            DPadButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right", onRight)
+    val rimColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val alpha = if (enabled) 1f else 0.35f
+
+    Box(
+        modifier = modifier
+            .size(200.dp)
+            .clip(CircleShape)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.surfaceVariant,
+                        MaterialTheme.colorScheme.surface,
+                    ),
+                ),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        TrackpadZone(Icons.Filled.KeyboardArrowUp, "Up", enabled, rimColor, alpha, onUp, Modifier.align(Alignment.TopCenter))
+        TrackpadZone(Icons.Filled.KeyboardArrowDown, "Down", enabled, rimColor, alpha, onDown, Modifier.align(Alignment.BottomCenter))
+        TrackpadZone(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left", enabled, rimColor, alpha, onLeft, Modifier.align(Alignment.CenterStart))
+        TrackpadZone(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right", enabled, rimColor, alpha, onRight, Modifier.align(Alignment.CenterEnd))
+
+        Box(
+            modifier = Modifier
+                .size(68.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.secondary,
+                        ),
+                    ),
+                )
+                .clickable(enabled = enabled, onClick = onEnter),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "OK",
+                color = MaterialTheme.colorScheme.onPrimary,
+                style = MaterialTheme.typography.labelLarge,
+            )
         }
-        DPadButton(Icons.Filled.KeyboardArrowDown, "Down", onDown)
     }
 }
 
 @Composable
-private fun DPadButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+private fun TrackpadZone(
+    icon: ImageVector,
     contentDescription: String,
+    enabled: Boolean,
+    tint: androidx.compose.ui.graphics.Color,
+    alpha: Float,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = Modifier
-            .padding(4.dp)
-            .size(56.dp)
-            .background(MaterialTheme.colorScheme.surface, CircleShape),
+        modifier = modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        IconButton(onClick = onClick) {
-            Icon(icon, contentDescription = contentDescription)
-        }
+        Icon(icon, contentDescription = contentDescription, tint = tint.copy(alpha = alpha))
     }
 }

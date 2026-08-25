@@ -23,8 +23,9 @@ fun RemoteApp(viewModel: TvRemoteViewModel = viewModel()) {
     val navController = rememberNavController()
     val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
 
-    // Once a connection attempt resolves to Connected, move to the remote screen.
-    // Falling back to Idle/Disconnected/Error sends the user back to reconnect.
+    // Any connection attempt moves to the remote screen and keeps it there — including
+    // Disconnected/Error, so losing the TV never strands the user on IP entry with no way
+    // to power it back on. Only an explicit "Switch TV" (which resets to Idle) leaves it.
     LaunchedEffect(connectionState) {
         navigateForState(navController, connectionState)
     }
@@ -44,8 +45,11 @@ fun RemoteApp(viewModel: TvRemoteViewModel = viewModel()) {
         composable(Routes.REMOTE) {
             RemoteScreen(
                 connectionState = connectionState,
+                canWake = viewModel.canWake(),
+                tvName = viewModel.prefs.lastName ?: viewModel.connectedIp ?: viewModel.prefs.lastIp ?: "TV",
                 onKey = viewModel::sendKey,
-                onDisconnect = {
+                onPowerTap = viewModel::onPowerTap,
+                onSwitchTv = {
                     viewModel.disconnect()
                 },
             )
@@ -56,17 +60,20 @@ fun RemoteApp(viewModel: TvRemoteViewModel = viewModel()) {
 private fun navigateForState(navController: NavHostController, state: TvConnectionState) {
     val onRemoteScreen = navController.currentDestination?.route == Routes.REMOTE
     when (state) {
-        TvConnectionState.Connecting, TvConnectionState.AwaitingPairing, TvConnectionState.Connected -> {
+        TvConnectionState.Idle -> {
+            // Only a deliberate "Switch TV" resets to Idle — safe to leave the remote screen.
+            if (onRemoteScreen) {
+                navController.popBackStack(Routes.CONNECT, inclusive = false)
+            }
+        }
+        else -> {
+            // Connecting, AwaitingPairing, Connected, Disconnected, WakingUp, and Error all
+            // stay on (or arrive at) the remote screen. Losing the TV mid-session — the whole
+            // point of this screen — must never bounce the user back to IP entry: Power (and
+            // the Wake-on-LAN retry it triggers) only lives here.
             if (!onRemoteScreen) {
                 navController.navigate(Routes.REMOTE)
             }
-        }
-        TvConnectionState.Idle, TvConnectionState.Disconnected, is TvConnectionState.Error -> {
-            if (onRemoteScreen && state !is TvConnectionState.Error) {
-                navController.popBackStack(Routes.CONNECT, inclusive = false)
-            }
-            // On Error we stay on the remote screen so the message is visible;
-            // the user can tap Disconnect to go back and retry.
         }
     }
 }
