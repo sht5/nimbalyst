@@ -52,7 +52,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -269,14 +268,9 @@ private fun PowerButton(showWakeState: Boolean, isWaking: Boolean, onClick: () -
         if (isWaking) {
             Box(
                 modifier = Modifier
-                    .size(56.dp)
-                    .graphicsLayer {
-                        scaleX = pulseScale
-                        scaleY = pulseScale
-                        alpha = pulseAlpha
-                    }
+                    .size(56.dp * pulseScale)
                     .clip(CircleShape)
-                    .border(1.5.dp, tint, CircleShape),
+                    .border(1.5.dp, tint.copy(alpha = pulseAlpha), CircleShape),
             )
         }
         Box(
