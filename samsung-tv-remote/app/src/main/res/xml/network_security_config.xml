@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Samsung TVs are controlled over the local Wi-Fi network only. The legacy
+  control port (8001) is plain http/ws, and the TV's own IP is entered by the
+  user at runtime, so it can't be pinned as a fixed domain here. Cleartext is
+  therefore allowed globally; this app never talks to anything outside the
+  local network the phone is already joined to.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

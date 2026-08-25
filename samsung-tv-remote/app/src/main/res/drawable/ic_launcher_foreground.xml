@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- TV body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,36 H84 A6,6 0 0 1 90,42 V70 A6,6 0 0 1 84,76 H24 A6,6 0 0 1 18,70 V42 A6,6 0 0 1 24,36 Z" />
+    <!-- Screen inset -->
+    <path
+        android:fillColor="#1428A0"
+        android:pathData="M27,43 H81 V69 H27 Z" />
+    <!-- Stand -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,76 H62 L66,86 H42 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,86 H74 V90 H34 Z" />
+</vector>
