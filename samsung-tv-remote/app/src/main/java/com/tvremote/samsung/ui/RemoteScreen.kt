@@ -91,13 +91,12 @@ fun RemoteScreen(
             .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        DeviceSwitchBar(
-            tvConnected = connectionState is TvConnectionState.Connected,
-            androidTvConnected = androidTvState is AndroidTvConnectionState.Connected,
+        ActiveDeviceStatusBar(
             activeDevice = activeDevice,
+            connectionState = connectionState,
+            androidTvState = androidTvState,
             tvName = tvName,
             androidTvName = androidTvName,
-            onSelectDevice = onSelectDevice,
             onSwitchTv = onSwitchTv,
         )
         Spacer(Modifier.height(18.dp))
@@ -107,23 +106,49 @@ fun RemoteScreen(
         } else {
             AndroidTvControls(androidTvState, onAndroidTvKey)
         }
+
+        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(18.dp))
+
+        DeviceSwitchBar(
+            tvConnected = connectionState is TvConnectionState.Connected,
+            androidTvConnected = androidTvState is AndroidTvConnectionState.Connected,
+            activeDevice = activeDevice,
+            tvName = tvName,
+            androidTvName = androidTvName,
+            onSelectDevice = onSelectDevice,
+        )
     }
 }
 
+/** A single line for whichever device is active — name, status pill, and the settings/forget action. */
 @Composable
-private fun DeviceSwitchBar(
-    tvConnected: Boolean,
-    androidTvConnected: Boolean,
+private fun ActiveDeviceStatusBar(
     activeDevice: DeviceKind,
+    connectionState: TvConnectionState,
+    androidTvState: AndroidTvConnectionState,
     tvName: String,
     androidTvName: String,
-    onSelectDevice: (DeviceKind) -> Unit,
     onSwitchTv: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        DevicePill(tvName, tvConnected, activeDevice == DeviceKind.TV) { onSelectDevice(DeviceKind.TV) }
-        Spacer(Modifier.width(8.dp))
-        DevicePill(androidTvName, androidTvConnected, activeDevice == DeviceKind.ANDROID_TV) { onSelectDevice(DeviceKind.ANDROID_TV) }
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.Tv, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(
+                text = if (activeDevice == DeviceKind.TV) tvName else androidTvName,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            if (activeDevice == DeviceKind.TV) StatusPill(connectionState) else AndroidTvStatusPill(androidTvState)
+        }
         Spacer(Modifier.weight(1f))
         Box(
             modifier = Modifier
@@ -144,19 +169,58 @@ private fun DeviceSwitchBar(
 }
 
 @Composable
-private fun DevicePill(label: String, connected: Boolean, active: Boolean, onClick: () -> Unit) {
-    val dotColor = if (connected) ConnectedGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-    val textColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    val background = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent
-    val borderModifier = if (active) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+private fun AndroidTvStatusPill(state: AndroidTvConnectionState) {
+    val (label, color) = when (state) {
+        AndroidTvConnectionState.Idle -> "Not connected" to MaterialTheme.colorScheme.onSurfaceVariant
+        AndroidTvConnectionState.Connecting -> "Connecting…" to WakeAmber
+        AndroidTvConnectionState.AwaitingPairingCode -> "Enter the code on screen" to WakeAmber
+        AndroidTvConnectionState.Connected -> "Connected" to ConnectedGreen
+        AndroidTvConnectionState.Disconnected -> "Disconnected" to MaterialTheme.colorScheme.onSurfaceVariant
+        is AndroidTvConnectionState.Error -> "Error" to PowerRed
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(6.dp))
+        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
 
+/** Full-width segmented toggle at the bottom of the screen, easy to reach one-handed. */
+@Composable
+private fun DeviceSwitchBar(
+    tvConnected: Boolean,
+    androidTvConnected: Boolean,
+    activeDevice: DeviceKind,
+    tvName: String,
+    androidTvName: String,
+    onSelectDevice: (DeviceKind) -> Unit,
+) {
     Row(
         modifier = Modifier
-            .clip(CircleShape)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        SwitchSegment(tvName, tvConnected, activeDevice == DeviceKind.TV, Modifier.weight(1f)) { onSelectDevice(DeviceKind.TV) }
+        SwitchSegment(androidTvName, androidTvConnected, activeDevice == DeviceKind.ANDROID_TV, Modifier.weight(1f)) { onSelectDevice(DeviceKind.ANDROID_TV) }
+    }
+}
+
+@Composable
+private fun SwitchSegment(label: String, connected: Boolean, active: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val dotColor = if (connected) ConnectedGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    val textColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val background = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
             .background(background)
-            .then(borderModifier)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(dotColor))
@@ -166,6 +230,7 @@ private fun DevicePill(label: String, connected: Boolean, active: Boolean, onCli
             style = MaterialTheme.typography.labelMedium,
             color = textColor,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
         )
     }
 }
@@ -238,6 +303,24 @@ private fun TvControls(
     Spacer(Modifier.height(18.dp))
 
     NumberPadChip(controlsEnabled, onKey)
+}
+
+@Composable
+private fun StatusPill(state: TvConnectionState) {
+    val (label, color) = when (state) {
+        TvConnectionState.Idle -> "Not connected" to MaterialTheme.colorScheme.onSurfaceVariant
+        TvConnectionState.Connecting -> "Connecting…" to WakeAmber
+        TvConnectionState.AwaitingPairing -> "Accept the prompt on your TV" to WakeAmber
+        TvConnectionState.Connected -> "Connected" to ConnectedGreen
+        TvConnectionState.Disconnected -> "TV is off" to MaterialTheme.colorScheme.onSurfaceVariant
+        TvConnectionState.WakingUp -> "Waking TV…" to WakeAmber
+        is TvConnectionState.Error -> "Error" to PowerRed
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(6.dp))
+        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable

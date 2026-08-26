@@ -10,7 +10,13 @@ import java.security.interfaces.RSAPublicKey
 import javax.security.auth.x500.X500Principal
 
 private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
-private const val KEY_ALIAS = "samsung_tv_remote_androidtv_client"
+
+// v2: the v1 alias only authorized PKCS1 signing, which throws a native "RSA routines: internal
+// error" deep in conscrypt/BoringSSL the moment a TLS handshake needs an RSA-PSS signature
+// instead (TLS 1.3's CertificateVerify requires PSS; some TLS 1.2 suites negotiate it too). A
+// Keystore key's authorized paddings can't be widened after creation, so this bumps the alias to
+// mint a fresh key under the broader spec below rather than leaving existing installs stuck.
+private const val KEY_ALIAS = "samsung_tv_remote_androidtv_client_v2"
 
 /**
  * The client identity Android TV pairing needs: a self-signed RSA cert the TV remembers after
@@ -36,8 +42,14 @@ object AndroidTvCertificate {
         )
             .setKeySize(2048)
             .setCertificateSubject(X500Principal("CN=Samsung TV Remote"))
-            .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA1)
-            .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
+            // Broad enough to cover whichever signature scheme the TLS handshake actually
+            // negotiates for CertificateVerify (varies by TLS version and the TV's cipher
+            // support) — see the alias comment above for what happens if this is too narrow.
+            .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA384, KeyProperties.DIGEST_SHA512)
+            .setSignaturePaddings(
+                KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
+                KeyProperties.SIGNATURE_PADDING_RSA_PSS,
+            )
             .build()
         generator.initialize(spec)
         generator.generateKeyPair()
