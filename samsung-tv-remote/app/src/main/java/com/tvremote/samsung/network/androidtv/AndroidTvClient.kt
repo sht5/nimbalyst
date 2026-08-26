@@ -1,5 +1,6 @@
 package com.tvremote.samsung.network.androidtv
 
+import android.content.Context
 import android.util.Log
 import com.tvremote.samsung.data.AndroidTvKey
 import com.tvremote.samsung.data.AndroidTvPrefs
@@ -16,7 +17,6 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
-import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
@@ -52,7 +52,7 @@ sealed interface AndroidTvConnectionState {
  * Both channels reuse the same self-signed client certificate ([AndroidTvCertificate]); once the
  * TV has seen it during pairing, reconnecting never needs the code again.
  */
-class AndroidTvClient(private val prefs: AndroidTvPrefs) {
+class AndroidTvClient(private val prefs: AndroidTvPrefs, private val context: Context) {
 
     private val _state = MutableStateFlow<AndroidTvConnectionState>(AndroidTvConnectionState.Idle)
     val state: StateFlow<AndroidTvConnectionState> = _state.asStateFlow()
@@ -68,7 +68,6 @@ class AndroidTvClient(private val prefs: AndroidTvPrefs) {
         currentIp = ip
         job?.cancel()
         job = scope.launch {
-            AndroidTvCertificate.ensureGenerated()
             if (prefs.isPaired(ip)) openControlChannel(ip) else startPairing(ip)
         }
     }
@@ -136,7 +135,7 @@ class AndroidTvClient(private val prefs: AndroidTvPrefs) {
 
     private suspend fun finishPairing(ip: String, channel: FramedChannel, code: String) {
         try {
-            val clientCert = AndroidTvCertificate.certificate()
+            val clientCert = AndroidTvCertificate.certificate(context)
             val serverCert = channel.peerCertificate() ?: throw IOException("No certificate from the TV")
             val secret = PairingSecret.compute(clientCert, serverCert, code)
                 ?: throw IllegalArgumentException("That code doesn't match — check it and try again")
@@ -212,16 +211,13 @@ class AndroidTvClient(private val prefs: AndroidTvPrefs) {
     }
 
     /**
-     * Presents our Keystore-backed client certificate (so the TV can identify/remember us) and
-     * accepts whatever self-signed certificate the TV presents back — the protocol never does
-     * real CA-chain trust in either direction, only the modulus/exponent comparison in
-     * [PairingSecret]. Scoped to this one local connection, same pattern as SamsungTvClient's
-     * trust-all TrustManager.
+     * Presents our client certificate (so the TV can identify/remember us) and accepts whatever
+     * self-signed certificate the TV presents back — the protocol never does real CA-chain trust
+     * in either direction, only the modulus/exponent comparison in [PairingSecret]. Scoped to
+     * this one local connection, same pattern as SamsungTvClient's trust-all TrustManager.
      */
     private fun buildSslContext(): SSLContext {
-        val keyStore = AndroidTvCertificate.keyStore()
-        val keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-        keyManagerFactory.init(keyStore, null)
+        val keyManagerFactory = AndroidTvCertificate.keyManagerFactory(context)
 
         val trustManager = object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit

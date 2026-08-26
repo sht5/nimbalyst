@@ -43,6 +43,20 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        resources {
+            // BouncyCastle's bcpkix/bcutil/bcprov jars each carry identical copies of these
+            // license/manifest files — none of it is metadata the app reads at runtime, only one
+            // copy is needed, and the packager otherwise refuses to merge them.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            excludes += "META-INF/LICENSE.md"
+            excludes += "META-INF/LICENSE"
+            excludes += "META-INF/LICENSE.txt"
+            excludes += "META-INF/NOTICE"
+            excludes += "META-INF/NOTICE.txt"
+        }
+    }
 }
 
 dependencies {
@@ -62,6 +76,10 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Self-signed cert generation for Android TV Remote pairing — the Android Keystore can't be
+    // used here since its RSA keys don't support the raw-sign operation TLS client-cert auth
+    // needs (see AndroidTvCertificate.kt). This is the standard library for that on Android.
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.85")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20231013")

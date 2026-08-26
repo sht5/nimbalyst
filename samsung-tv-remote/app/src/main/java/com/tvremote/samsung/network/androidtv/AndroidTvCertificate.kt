@@ -1,69 +1,117 @@
 package com.tvremote.samsung.network.androidtv
 
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
+import android.content.Context
+import org.bouncycastle.asn1.x500.X500Name
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
+import java.io.File
 import java.math.BigInteger
+import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.SecureRandom
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.security.interfaces.RSAPublicKey
-import javax.security.auth.x500.X500Principal
+import java.security.spec.PKCS8EncodedKeySpec
+import java.util.Date
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.KeyManagerFactory
 
-private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
-
-// v2: the v1 alias only authorized PKCS1 signing, which throws a native "RSA routines: internal
-// error" deep in conscrypt/BoringSSL the moment a TLS handshake needs an RSA-PSS signature
-// instead (TLS 1.3's CertificateVerify requires PSS; some TLS 1.2 suites negotiate it too). A
-// Keystore key's authorized paddings can't be widened after creation, so this bumps the alias to
-// mint a fresh key under the broader spec below rather than leaving existing installs stuck.
-private const val KEY_ALIAS = "samsung_tv_remote_androidtv_client_v2"
+private const val KEY_FILE = "androidtv_client.key.der"
+private const val CERT_FILE = "androidtv_client.cert.der"
+private const val KEYSTORE_ALIAS = "androidtv-client"
 
 /**
  * The client identity Android TV pairing needs: a self-signed RSA cert the TV remembers after
  * pairing and never validates against a CA — it only reads the public key's modulus/exponent to
  * compute the pairing-secret hash (see [PairingSecret]), and later recognizes this exact cert on
- * reconnect to skip pairing. Generated once, in the Android Keystore, so the private key never
- * leaves hardware-backed storage and never needs writing to disk ourselves (unlike the reference
- * Python client, which has no keystore to lean on and writes a PEM file instead).
+ * reconnect to skip pairing.
+ *
+ * This is generated in **software**, not the Android Keystore. AndroidKeyStore-backed RSA keys
+ * look like the safer default, but they don't support the raw/pre-hashed signing operation TLS's
+ * own CertificateVerify step needs during client-certificate authentication — every handshake
+ * attempt fails deep in conscrypt with an opaque "RSA routines: internal error" and there's no
+ * KeyGenParameterSpec option to authorize around it, since the Keystore only ever signs data it
+ * hashes itself. A plain software key has no such restriction. The private key is written to this
+ * app's private storage instead (never backed up, inaccessible to other apps) — a reasonable
+ * tradeoff since this cert only identifies the app to a device on the local network; it protects
+ * nothing sensitive the way the Samsung side's pairing token or account credentials would.
  */
 object AndroidTvCertificate {
 
-    fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
+    private val NO_PASSWORD = CharArray(0)
 
-    /** Creates the client keypair/cert on first use; a no-op if one already exists. */
-    fun ensureGenerated() {
-        val keyStore = keyStore()
-        if (keyStore.containsAlias(KEY_ALIAS)) return
+    @Volatile private var cachedKey: PrivateKey? = null
+    @Volatile private var cachedCert: X509Certificate? = null
 
-        val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, KEYSTORE_PROVIDER)
-        val spec = KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
-            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
-        )
-            .setKeySize(2048)
-            .setCertificateSubject(X500Principal("CN=Samsung TV Remote"))
-            // Broad enough to cover whichever signature scheme the TLS handshake actually
-            // negotiates for CertificateVerify (varies by TLS version and the TV's cipher
-            // support) — see the alias comment above for what happens if this is too narrow.
-            .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA384, KeyProperties.DIGEST_SHA512)
-            .setSignaturePaddings(
-                KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
-                KeyProperties.SIGNATURE_PADDING_RSA_PSS,
-            )
-            .build()
-        generator.initialize(spec)
-        generator.generateKeyPair()
+    @Synchronized
+    fun certificate(context: Context): X509Certificate {
+        ensureGenerated(context)
+        return cachedCert!!
     }
 
-    fun alias(): String = KEY_ALIAS
-
-    fun certificate(): X509Certificate {
-        ensureGenerated()
-        return keyStore().getCertificate(KEY_ALIAS) as X509Certificate
+    /** A ready-to-use KeyManagerFactory presenting this identity for TLS client authentication. */
+    @Synchronized
+    fun keyManagerFactory(context: Context): KeyManagerFactory {
+        ensureGenerated(context)
+        val keyStore = KeyStore.getInstance("PKCS12").apply {
+            load(null, null)
+            setKeyEntry(KEYSTORE_ALIAS, cachedKey, NO_PASSWORD, arrayOf(cachedCert))
+        }
+        return KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply {
+            init(keyStore, NO_PASSWORD)
+        }
     }
 
     fun modulusAndExponent(cert: X509Certificate): Pair<BigInteger, BigInteger> {
         val key = cert.publicKey as RSAPublicKey
         return key.modulus to key.publicExponent
+    }
+
+    private fun ensureGenerated(context: Context) {
+        if (cachedKey != null) return
+        if (loadFromDisk(context)) return
+        generateAndStore(context)
+    }
+
+    private fun loadFromDisk(context: Context): Boolean {
+        val keyFile = File(context.filesDir, KEY_FILE)
+        val certFile = File(context.filesDir, CERT_FILE)
+        if (!keyFile.exists() || !certFile.exists()) return false
+
+        val privateKey = KeyFactory.getInstance("RSA")
+            .generatePrivate(PKCS8EncodedKeySpec(keyFile.readBytes()))
+        val cert = certFile.inputStream().use {
+            CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
+        }
+        cachedKey = privateKey
+        cachedCert = cert
+        return true
+    }
+
+    private fun generateAndStore(context: Context) {
+        val keyPair = KeyPairGenerator.getInstance("RSA").apply { initialize(2048, SecureRandom()) }.generateKeyPair()
+
+        val subject = X500Name("CN=Samsung TV Remote")
+        val now = System.currentTimeMillis()
+        val certBuilder = JcaX509v3CertificateBuilder(
+            subject,
+            BigInteger.valueOf(1),
+            Date(now - TimeUnit.DAYS.toMillis(1)),
+            Date(now + TimeUnit.DAYS.toMillis(10 * 365)),
+            subject,
+            keyPair.public,
+        )
+        val signer = JcaContentSignerBuilder("SHA256WithRSA").build(keyPair.private)
+        val cert = JcaX509CertificateConverter().getCertificate(certBuilder.build(signer))
+
+        File(context.filesDir, KEY_FILE).writeBytes(keyPair.private.encoded)
+        File(context.filesDir, CERT_FILE).writeBytes(cert.encoded)
+
+        cachedKey = keyPair.private
+        cachedCert = cert
     }
 }

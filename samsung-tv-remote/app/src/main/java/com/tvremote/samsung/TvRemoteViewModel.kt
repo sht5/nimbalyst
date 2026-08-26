@@ -27,7 +27,7 @@ class TvRemoteViewModel(application: Application) : AndroidViewModel(application
     private val client = SamsungTvClient(prefs)
 
     val androidTvPrefs = AndroidTvPrefs(application)
-    private val androidTvClient = AndroidTvClient(androidTvPrefs)
+    private val androidTvClient = AndroidTvClient(androidTvPrefs, application)
 
     val connectionState: StateFlow<TvConnectionState> = client.state
     val androidTvState: StateFlow<AndroidTvConnectionState> = androidTvClient.state
