@@ -28,12 +28,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Power
@@ -53,120 +55,75 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.tvremote.samsung.data.AndroidTvKey
+import com.tvremote.samsung.data.DeviceKind
 import com.tvremote.samsung.data.RemoteKey
 import com.tvremote.samsung.network.TvConnectionState
+import com.tvremote.samsung.network.androidtv.AndroidTvConnectionState
 import com.tvremote.samsung.ui.components.DPad
 
 private val PowerRed = Color(0xFFE0525C)
 private val WakeAmber = Color(0xFFF0A94E)
+private val ConnectedGreen = Color(0xFF3FD98C)
 
 @Composable
 fun RemoteScreen(
     connectionState: TvConnectionState,
+    androidTvState: AndroidTvConnectionState,
+    activeDevice: DeviceKind,
     canWake: Boolean,
     tvName: String,
+    androidTvName: String,
     onKey: (RemoteKey) -> Unit,
+    onAndroidTvKey: (AndroidTvKey) -> Unit,
     onPowerTap: () -> Unit,
     onSwitchTv: () -> Unit,
+    onSelectDevice: (DeviceKind) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isConnected = connectionState is TvConnectionState.Connected
-    val isWaking = connectionState is TvConnectionState.WakingUp
-    val showWakeState = !isConnected && connectionState != TvConnectionState.Connecting &&
-        connectionState != TvConnectionState.AwaitingPairing && canWake
-    val controlsEnabled = isConnected
-
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        TopBar(connectionState, tvName, onSwitchTv)
-        Spacer(Modifier.height(18.dp))
-
-        PowerSourceRow(
-            showWakeState = showWakeState,
-            isWaking = isWaking,
-            onPowerTap = onPowerTap,
-            onSource = { onKey(RemoteKey.SOURCE) },
-            sourceEnabled = controlsEnabled,
+        DeviceSwitchBar(
+            tvConnected = connectionState is TvConnectionState.Connected,
+            androidTvConnected = androidTvState is AndroidTvConnectionState.Connected,
+            activeDevice = activeDevice,
+            tvName = tvName,
+            androidTvName = androidTvName,
+            onSelectDevice = onSelectDevice,
+            onSwitchTv = onSwitchTv,
         )
-
-        if (showWakeState) {
-            Spacer(Modifier.height(14.dp))
-            WakeBanner(connectionState)
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        DPad(
-            onUp = { onKey(RemoteKey.UP) },
-            onDown = { onKey(RemoteKey.DOWN) },
-            onLeft = { onKey(RemoteKey.LEFT) },
-            onRight = { onKey(RemoteKey.RIGHT) },
-            onEnter = { onKey(RemoteKey.ENTER) },
-            enabled = controlsEnabled,
-        )
-
-        Spacer(Modifier.height(20.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-        ) {
-            NavItem(Icons.AutoMirrored.Filled.ArrowBack, "Back", controlsEnabled) { onKey(RemoteKey.BACK) }
-            NavItem(Icons.Filled.Home, "Home", controlsEnabled) { onKey(RemoteKey.HOME) }
-            NavItem(Icons.Filled.Menu, "Menu", controlsEnabled) { onKey(RemoteKey.MENU) }
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.Top,
-        ) {
-            RockerColumn("Volume", controlsEnabled, { onKey(RemoteKey.VOLUME_UP) }, { onKey(RemoteKey.VOLUME_DOWN) })
-            MuteColumn(controlsEnabled) { onKey(RemoteKey.MUTE) }
-            RockerColumn("Channel", controlsEnabled, { onKey(RemoteKey.CHANNEL_UP) }, { onKey(RemoteKey.CHANNEL_DOWN) })
-        }
-
         Spacer(Modifier.height(18.dp))
 
-        TransportRow(controlsEnabled, onKey)
-
-        Spacer(Modifier.height(18.dp))
-
-        NumberPadChip(controlsEnabled, onKey)
+        if (activeDevice == DeviceKind.TV) {
+            TvControls(connectionState, canWake, onKey, onPowerTap)
+        } else {
+            AndroidTvControls(androidTvState, onAndroidTvKey)
+        }
     }
 }
 
 @Composable
-private fun TopBar(connectionState: TvConnectionState, tvName: String, onSwitchTv: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Tv, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-        }
-        Spacer(Modifier.width(10.dp))
-        Column {
-            Text(
-                text = tvName,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            StatusPill(connectionState)
-        }
+private fun DeviceSwitchBar(
+    tvConnected: Boolean,
+    androidTvConnected: Boolean,
+    activeDevice: DeviceKind,
+    tvName: String,
+    androidTvName: String,
+    onSelectDevice: (DeviceKind) -> Unit,
+    onSwitchTv: () -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        DevicePill(tvName, tvConnected, activeDevice == DeviceKind.TV) { onSelectDevice(DeviceKind.TV) }
+        Spacer(Modifier.width(8.dp))
+        DevicePill(androidTvName, androidTvConnected, activeDevice == DeviceKind.ANDROID_TV) { onSelectDevice(DeviceKind.ANDROID_TV) }
         Spacer(Modifier.weight(1f))
         Box(
             modifier = Modifier
@@ -187,26 +144,100 @@ private fun TopBar(connectionState: TvConnectionState, tvName: String, onSwitchT
 }
 
 @Composable
-private fun StatusPill(state: TvConnectionState) {
-    val (label, color) = when (state) {
-        TvConnectionState.Idle -> "Not connected" to MaterialTheme.colorScheme.onSurfaceVariant
-        TvConnectionState.Connecting -> "Connecting…" to WakeAmber
-        TvConnectionState.AwaitingPairing -> "Accept the prompt on your TV" to WakeAmber
-        TvConnectionState.Connected -> "Connected" to Color(0xFF3FD98C)
-        TvConnectionState.Disconnected -> "TV is off" to MaterialTheme.colorScheme.onSurfaceVariant
-        TvConnectionState.WakingUp -> "Waking TV…" to WakeAmber
-        is TvConnectionState.Error -> "Error" to PowerRed
-    }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(color),
-        )
+private fun DevicePill(label: String, connected: Boolean, active: Boolean, onClick: () -> Unit) {
+    val dotColor = if (connected) ConnectedGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    val textColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val background = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent
+    val borderModifier = if (active) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(background)
+            .then(borderModifier)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(dotColor))
         Spacer(Modifier.width(6.dp))
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = textColor,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+        )
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Samsung TV pane
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+private fun TvControls(
+    connectionState: TvConnectionState,
+    canWake: Boolean,
+    onKey: (RemoteKey) -> Unit,
+    onPowerTap: () -> Unit,
+) {
+    val isConnected = connectionState is TvConnectionState.Connected
+    val isWaking = connectionState is TvConnectionState.WakingUp
+    val showWakeState = !isConnected && connectionState != TvConnectionState.Connecting &&
+        connectionState != TvConnectionState.AwaitingPairing && canWake
+    val controlsEnabled = isConnected
+
+    PowerSourceRow(
+        showWakeState = showWakeState,
+        isWaking = isWaking,
+        onPowerTap = onPowerTap,
+        onSource = { onKey(RemoteKey.SOURCE) },
+        sourceEnabled = controlsEnabled,
+    )
+
+    if (showWakeState) {
+        Spacer(Modifier.height(14.dp))
+        WakeBanner(connectionState)
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    DPad(
+        onUp = { onKey(RemoteKey.UP) },
+        onDown = { onKey(RemoteKey.DOWN) },
+        onLeft = { onKey(RemoteKey.LEFT) },
+        onRight = { onKey(RemoteKey.RIGHT) },
+        onEnter = { onKey(RemoteKey.ENTER) },
+        enabled = controlsEnabled,
+    )
+
+    Spacer(Modifier.height(20.dp))
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        NavItem(Icons.AutoMirrored.Filled.ArrowBack, "Back", controlsEnabled) { onKey(RemoteKey.BACK) }
+        NavItem(Icons.Filled.Home, "Home", controlsEnabled) { onKey(RemoteKey.HOME) }
+        NavItem(Icons.Filled.Menu, "Menu", controlsEnabled) { onKey(RemoteKey.MENU) }
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.Top,
+    ) {
+        RockerColumn("Volume", controlsEnabled, { onKey(RemoteKey.VOLUME_UP) }, { onKey(RemoteKey.VOLUME_DOWN) })
+        MuteColumn(controlsEnabled) { onKey(RemoteKey.MUTE) }
+        RockerColumn("Channel", controlsEnabled, { onKey(RemoteKey.CHANNEL_UP) }, { onKey(RemoteKey.CHANNEL_DOWN) })
+    }
+
+    Spacer(Modifier.height(18.dp))
+
+    TransportRow(controlsEnabled, onKey)
+
+    Spacer(Modifier.height(18.dp))
+
+    NumberPadChip(controlsEnabled, onKey)
 }
 
 @Composable
@@ -223,7 +254,7 @@ private fun PowerSourceRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            PowerButton(showWakeState = showWakeState, isWaking = isWaking, onClick = onPowerTap)
+            PowerButton(tint = if (showWakeState) WakeAmber else PowerRed, pulsing = isWaking, onClick = onPowerTap)
             Spacer(Modifier.height(4.dp))
             Text(
                 text = if (showWakeState) (if (isWaking) "Waking…" else "Tap to turn on") else "Power",
@@ -248,8 +279,7 @@ private fun PowerSourceRow(
 }
 
 @Composable
-private fun PowerButton(showWakeState: Boolean, isWaking: Boolean, onClick: () -> Unit) {
-    val tint = if (showWakeState) WakeAmber else PowerRed
+private fun PowerButton(tint: Color, pulsing: Boolean, onClick: () -> Unit) {
     val infiniteTransition = rememberInfiniteTransition(label = "power-pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 0.85f,
@@ -265,7 +295,7 @@ private fun PowerButton(showWakeState: Boolean, isWaking: Boolean, onClick: () -
     )
 
     Box(modifier = Modifier.size(64.dp), contentAlignment = Alignment.Center) {
-        if (isWaking) {
+        if (pulsing) {
             Box(
                 modifier = Modifier
                     .size(56.dp * pulseScale)
@@ -297,8 +327,12 @@ private fun WakeBanner(state: TvConnectionState) {
         else -> "Connection dropped when the TV powered off. Tap Power to send a wake signal — " +
             "we'll reconnect automatically once it responds."
     }
-    val tint = if (state is TvConnectionState.Error) PowerRed else WakeAmber
+    ErrorBanner(text, danger = state is TvConnectionState.Error)
+}
 
+@Composable
+private fun ErrorBanner(text: String, danger: Boolean = true) {
+    val tint = if (danger) PowerRed else WakeAmber
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -313,8 +347,132 @@ private fun WakeBanner(state: TvConnectionState) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Mecool (Android TV) pane
+// ---------------------------------------------------------------------------------------------
+
 @Composable
-private fun NavItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun AndroidTvControls(state: AndroidTvConnectionState, onKey: (AndroidTvKey) -> Unit) {
+    val controlsEnabled = state is AndroidTvConnectionState.Connected
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(modifier = Modifier.size(64.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(PowerRed.copy(alpha = 0.14f))
+                        .border(1.dp, PowerRed.copy(alpha = 0.4f), CircleShape)
+                        .clickable(enabled = controlsEnabled) { onKey(AndroidTvKey.POWER) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Power, contentDescription = "Power", tint = PowerRed.copy(alpha = if (controlsEnabled) 1f else 0.5f))
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("Power", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        Row(
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (controlsEnabled) 1f else 0.35f))
+                .clickable(enabled = controlsEnabled) { onKey(AndroidTvKey.SEARCH) }
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Voice search", style = MaterialTheme.typography.labelMedium)
+        }
+    }
+
+    if (state is AndroidTvConnectionState.Error) {
+        Spacer(Modifier.height(14.dp))
+        ErrorBanner(state.message)
+    } else if (state is AndroidTvConnectionState.Connecting || state is AndroidTvConnectionState.AwaitingPairingCode) {
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "Connecting to the streamer…",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    DPad(
+        onUp = { onKey(AndroidTvKey.DPAD_UP) },
+        onDown = { onKey(AndroidTvKey.DPAD_DOWN) },
+        onLeft = { onKey(AndroidTvKey.DPAD_LEFT) },
+        onRight = { onKey(AndroidTvKey.DPAD_RIGHT) },
+        onEnter = { onKey(AndroidTvKey.DPAD_CENTER) },
+        enabled = controlsEnabled,
+    )
+
+    Spacer(Modifier.height(20.dp))
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        NavItem(Icons.AutoMirrored.Filled.ArrowBack, "Back", controlsEnabled) { onKey(AndroidTvKey.BACK) }
+        NavItem(Icons.Filled.Home, "Home", controlsEnabled) { onKey(AndroidTvKey.HOME) }
+        NavItem(Icons.Filled.Apps, "Apps", controlsEnabled) { onKey(AndroidTvKey.APP_SWITCH) }
+    }
+
+    Spacer(Modifier.height(22.dp))
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        RockerColumn("Volume", controlsEnabled, { onKey(AndroidTvKey.VOLUME_UP) }, { onKey(AndroidTvKey.VOLUME_DOWN) })
+        Spacer(Modifier.height(10.dp))
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (controlsEnabled) 1f else 0.35f))
+                .clickable(enabled = controlsEnabled) { onKey(AndroidTvKey.VOLUME_MUTE) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.AutoMirrored.Filled.VolumeOff, contentDescription = "Mute", modifier = Modifier.size(18.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Still reaches the TV, via the Mecool's CEC passthrough",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(160.dp),
+        )
+    }
+
+    Spacer(Modifier.height(18.dp))
+
+    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        val alpha = if (controlsEnabled) 1f else 0.35f
+        TransportButton(Icons.Filled.FastRewind, "Rewind", controlsEnabled, alpha) { onKey(AndroidTvKey.MEDIA_REWIND) }
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha))
+                .clickable(enabled = controlsEnabled) { onKey(AndroidTvKey.MEDIA_PLAY_PAUSE) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.PlayArrow, contentDescription = "Play/Pause", tint = MaterialTheme.colorScheme.onPrimary)
+        }
+        TransportButton(Icons.Filled.FastForward, "Fast forward", controlsEnabled, alpha) { onKey(AndroidTvKey.MEDIA_FAST_FORWARD) }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shared pieces
+// ---------------------------------------------------------------------------------------------
+
+@Composable
+private fun NavItem(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
     val alpha = if (enabled) 1f else 0.35f
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -409,7 +567,7 @@ private fun TransportRow(enabled: Boolean, onKey: (RemoteKey) -> Unit) {
 }
 
 @Composable
-private fun TransportButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, alpha: Float, onClick: () -> Unit) {
+private fun TransportButton(icon: ImageVector, label: String, enabled: Boolean, alpha: Float, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(40.dp)

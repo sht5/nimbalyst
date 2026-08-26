@@ -1,9 +1,11 @@
 # Samsung TV Remote
 
 A small native Android app (Kotlin + Jetpack Compose) that turns your phone into a
-remote for a Samsung Smart TV. It talks directly to the TV over your local Wi-Fi
-network — no cloud account, no SmartThings login, no internet access required
-beyond the phone and TV being on the same network.
+remote for a Samsung Smart TV — and, on the same screen, for an Android TV /
+Google TV streamer (Chromecast with Google TV, Shield, Mecool, etc.) plugged
+into one of its HDMI inputs. It talks directly to both devices over your local
+Wi-Fi network — no cloud account, no SmartThings/Google login, no internet
+access required beyond the phone and TV/streamer being on the same network.
 
 This is a standalone project, unrelated to the rest of this repository. It lives at
 the repo root (rather than under `packages/`) because it isn't part of the
@@ -71,6 +73,39 @@ addressed to the TV's MAC — the same mechanism the SmartThings app uses.
   models) — the same setting SmartThings depends on. If a wake signal goes
   unanswered after ~15 seconds, the remote screen says so.
 
+## Controlling a streamer plugged into the TV
+
+Certified Android TV / Google TV devices (Chromecast with Google TV, NVIDIA
+Shield, most Google TV-branded sets, and Google-certified boxes like Mecool's
+Android TV models) run a local **Android TV Remote** service — the same one
+the official "Android TV Remote Control" and Google Home apps use. It's a
+different protocol from the Samsung one above:
+
+- **Discovery** is mDNS (`_androidtvremote2._tcp`) via Android's built-in
+  `NsdManager`, not SSDP.
+- **Pairing** (port 6467) is a TLS handshake using a self-signed certificate
+  the app generates once in the Android Keystore. The streamer shows a
+  6-digit code on screen; typing it back in proves both sides hold the
+  certs a SHA-256 hash was computed over — there's no bearer token, the
+  certificate itself is the credential the streamer remembers.
+- **Control** (port 6466) is a persistent TLS connection carrying
+  protobuf-encoded key presses (`network/androidtv/RemoteMessages.kt`) using
+  Android's own standard key codes.
+
+The remote screen's TV identity block becomes a two-device switcher once a
+streamer is paired: tapping its pill both re-points button presses at it and
+sends the TV's own Source key, mirroring what pressing Source on the
+physical remote does. Volume stays routed to whichever device's pill is
+active, since a streamer's volume keys typically control the TV over HDMI-CEC
+passthrough anyway. Unlike the Samsung side, there's no Wake-on-LAN flow
+here — switching HDMI input to the streamer wakes it on its own.
+
+Wire-format details (field numbers, the pairing-secret hash, framing) are
+ported directly from the open-source reference client
+[tronikos/androidtvremote2](https://github.com/tronikos/androidtvremote2)
+rather than hand-rolled protobuf definitions, since a wrong field number
+there fails silently with no useful error from the TV side.
+
 ## Before your TV will respond
 
 On the TV: **Settings → General → External Device Manager → Device Connect
@@ -103,17 +138,28 @@ Requires JDK 17, compileSdk/targetSdk 35, minSdk 26.
 
 ```
 app/src/main/java/com/tvremote/samsung/
-  MainActivity.kt            Compose entry point
-  RemoteApp.kt                Navigation between Connect and Remote screens
-  TvRemoteViewModel.kt        Holds connection state, exposed to Compose
-  data/RemoteKeys.kt          Samsung remote key codes
-  data/TvPrefs.kt             Saved IP + pairing token (SharedPreferences)
-  network/SamsungTvClient.kt  Websocket client: connect, pair, send keys, wake
-  network/WakeOnLan.kt        Sends the Wake-on-LAN magic packet
-  network/TvDiscovery.kt      SSDP scan for Samsung TVs on the LAN
-  ui/ConnectScreen.kt         IP entry + discovery results
-  ui/RemoteScreen.kt          The remote control surface
-  ui/components/DPad.kt       Directional pad component
+  MainActivity.kt              Compose entry point
+  RemoteApp.kt                  Navigation: Connect, Remote, Add-streamer screens
+  TvRemoteViewModel.kt          Holds connection state for both devices, exposed to Compose
+  data/RemoteKeys.kt            Samsung remote key codes
+  data/AndroidTvKey.kt          Android TV remote key codes
+  data/DeviceKind.kt            Which device the remote screen currently targets
+  data/TvPrefs.kt                Saved Samsung IP + pairing token (SharedPreferences)
+  data/AndroidTvPrefs.kt         Saved streamer IP + paired flag (SharedPreferences)
+  network/SamsungTvClient.kt    Websocket client: connect, pair, send keys, wake
+  network/WakeOnLan.kt          Sends the Wake-on-LAN magic packet
+  network/TvDiscovery.kt        SSDP scan for Samsung TVs on the LAN
+  network/androidtv/AndroidTvClient.kt      TLS pairing + persistent control connection
+  network/androidtv/AndroidTvCertificate.kt Keystore-backed self-signed client cert
+  network/androidtv/PairingSecret.kt        The pairing-code hash/verification
+  network/androidtv/Proto.kt                Minimal hand-rolled protobuf wire format
+  network/androidtv/PoloMessages.kt         Pairing-channel messages (port 6467)
+  network/androidtv/RemoteMessages.kt       Control-channel messages (port 6466)
+  network/androidtv/AndroidTvDiscovery.kt   mDNS scan for Android TV devices on the LAN
+  ui/ConnectScreen.kt           IP entry + discovery results (Samsung)
+  ui/AndroidTvConnectScreen.kt  IP entry + discovery + pairing-code dialog (streamer)
+  ui/RemoteScreen.kt            The remote control surface, both device panes
+  ui/components/DPad.kt         Directional pad component
 ```
 
 ## Notes on the self-signed certificate
